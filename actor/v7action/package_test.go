@@ -1026,4 +1026,96 @@ var _ = Describe("Package Actions", func() {
 			Entry("EXPIRED", constant.PackageExpired, actionerror.PackageProcessingExpiredError{}),
 		)
 	})
+
+	Describe("CopyPackage", func() {
+		var (
+			sourceAppGUID string
+			targetAppGUID string
+			pkg           Package
+			warnings      Warnings
+			executeErr    error
+		)
+
+		BeforeEach(func() {
+			targetAppGUID = "target-app-guid"
+
+			fakeCloudControllerClient.GetPackagesReturns(
+				[]ccv3.Package{{GUID: "source-package-guid"}},
+				ccv3.Warnings{"get-source-package-warning"},
+				nil,
+			)
+
+			fakeCloudControllerClient.CopyPackageReturns(
+				ccv3.Package{GUID: "target-package-guid"},
+				ccv3.Warnings{"copy-package-warning"},
+				nil,
+			)
+		})
+
+		JustBeforeEach(func() {
+			pkg, warnings, executeErr = actor.CopyPackage(sourceAppGUID, targetAppGUID)
+		})
+
+		It("returns all warnings", func() {
+			Expect(executeErr).ToNot(HaveOccurred())
+			Expect(warnings).To(ConsistOf("get-source-package-warning", "copy-package-warning"))
+			Expect(pkg).To(Equal(Package{GUID: "target-package-guid"}))
+		})
+
+		When("getting the source package fails", func() {
+			var err error
+
+			BeforeEach(func() {
+				err = errors.New("get-package-error")
+				fakeCloudControllerClient.GetPackagesReturns(
+					[]ccv3.Package{},
+					ccv3.Warnings{"get-source-package-warning"},
+					err,
+				)
+			})
+
+			It("returns the error", func() {
+				Expect(executeErr).To(MatchError(err))
+				Expect(warnings).To(ConsistOf("get-source-package-warning"))
+
+				queries := fakeCloudControllerClient.GetPackagesArgsForCall(0)
+				Expect(queries).To(Equal([]ccv3.Query{
+					ccv3.Query{
+						Key:    ccv3.AppGUIDFilter,
+						Values: []string{sourceAppGUID},
+					},
+					ccv3.Query{
+						Key:    ccv3.StatesFilter,
+						Values: []string{string(constant.PackageReady)},
+					},
+					ccv3.Query{
+						Key:    ccv3.OrderBy,
+						Values: []string{ccv3.CreatedAtDescendingOrder},
+					},
+				}))
+			})
+		})
+
+		When("getting the source package fails", func() {
+			var err error
+
+			BeforeEach(func() {
+				err = errors.New("copy-package-error")
+				fakeCloudControllerClient.CopyPackageReturns(
+					ccv3.Package{GUID: "target-package-guid"},
+					ccv3.Warnings{"copy-package-warning"},
+					err,
+				)
+			})
+
+			It("returns the error", func() {
+				Expect(executeErr).To(MatchError(err))
+				Expect(warnings).To(ConsistOf("get-source-package-warning", "copy-package-warning"))
+
+				sourcePkgGUID, appGUID := fakeCloudControllerClient.CopyPackageArgsForCall(0)
+				Expect(sourcePkgGUID).To(Equal("source-package-guid"))
+				Expect(appGUID).To(Equal(targetAppGUID))
+			})
+		})
+	})
 })
